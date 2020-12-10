@@ -1,0 +1,156 @@
+(setq gc-cons-threshold 100000000)
+(setq inhibit-startup-message t)
+
+;; ----------------------------------------------
+;; ------ Configuration package manager ---------
+;; ----------------------------------------------
+
+(require 'package)
+(let* ((no-ssl (and (memq system-type '(windows-nt ms-dos))
+                    (not (gnutls-available-p))))
+       (proto (if no-ssl "http" "https")))
+
+  ;; Comment/uncomment these two lines to enable/disable MELPA and
+  ;;MELPA Stable as desired
+  (add-to-list
+   'package-archives (cons "melpa" (concat proto "://melpa.org/packages/")) t)
+
+  ;;(add-to-list 'package-archives (cons "melpa-stable"
+  ;; (concat proto "://stable.melpa.org/packages/")) t)
+  (when (< emacs-major-version 24)
+
+    ;; For important compatibility libraries like cl-lib
+    (add-to-list 'package-archives
+                 '("gnu" . (concat proto "://elpa.gnu.org/packages/")))))
+
+    (add-to-list 'package-archives
+             '("org" . "http://orgmode.org/elpa/") t) ;
+    (add-to-list 'package-archives
+                 '("elpa" . "http://elpa.gnu.org/packages/") t)
+
+(package-initialize)
+
+(when (not package-archive-contents)
+  (package-refresh-contents))
+
+(unless (package-installed-p 'use-package)
+  (package-install 'use-package))
+
+(defvar package-menu-exclude-packages '("nimbus-theme"))
+
+(defun package-menu--remove-excluded-packages (orig)
+  (let ((included (-filter
+                   (lambda (entry)
+                     (let ((name (symbol-name (package-desc-name (car entry)))))
+                       (not (member name package-menu-exclude-packages))))
+                   tabulated-list-entries)))
+    (setq-local tabulated-list-entries included)
+    (funcall orig)))
+
+(advice-add 'package-menu--find-upgrades :around #'package-menu--remove-excluded-packages)
+
+(add-to-list 'load-path "~/.emacs.d/custom")
+(add-to-list 'load-path "~/.emacs.d/libs")
+
+(require 'use-package)
+(setq use-package-always-ensure t)
+
+(setq make-backup-files nil)
+
+;; ----------------------------------------------
+;; -------- Package configuration  --------------
+;; ----------------------------------------------
+
+(require 'setup-general)
+(require 'setup-helm)
+(require 'setup-org)
+(require 'setup-debug)
+(require 'setup-editing)
+(require 'setup-dashboard)
+(require 'setup-erc)
+(require 'setup-org)
+(require 'setup-coding)
+(custom-set-variables
+ ;; custom-set-variables was added by Custom.
+ ;; If you edit it by hand, you could mess it up, so be careful.
+ ;; Your init file should contain only one such instance.
+ ;; If there is more than one, they won't work right.
+ '(package-selected-packages
+   '(org yasnippet xclip use-package undo-tree powerline php-mode org-ref org-download ob-async nimbus-theme multiple-cursors move-text magit lsp-ui keychain-environment helm-swoop helm-projectile flycheck dashboard dap-mode company-shell company-lsp company-jedi buffer-move autopair auto-highlight-symbol ace-jump-mode)))
+(custom-set-faces
+ ;; custom-set-faces was added by Custom.
+ ;; If you edit it by hand, you could mess it up, so be careful.
+ ;; Your init file should contain only one such instance.
+ ;; If there is more than one, they won't work right.
+ )
+
+;; From Anders Johansson <https://groups.google.com/d/msg/emacs-helm/tA6cn6TUdRY/G1S3TIdzBwAJ>
+
+;; This works pretty well.  It's not perfect, but it's a great
+;; start.  He posted it on 3 Mar 2016, on a thread that was
+;; started in Oct 2013.  He also posted this message on 2 Apr
+;; 2014, maybe an earlier attempt at a solution:
+;; <http://article.gmane.org/gmane.emacs.orgmode/84495>
+
+(add-to-list 'helm-completing-read-handlers-alist '(org-set-tags . aj/org-completing-read-tags))
+(add-to-list 'helm-completing-read-handlers-alist '(org-capture . aj/org-completing-read-tags))
+
+(defun aj/org-completing-read-tags (prompt coll pred req initial hist def inh)
+  (if (not (string= "Tags: " prompt))
+      ;; Not a tags prompt.  Use normal completion by calling
+      ;; `org-icompleting-read' again without this function in
+      ;; `helm-completing-read-handlers-alist'
+      (let ((helm-completing-read-handlers-alist (rassq-delete-all
+                                                  'aj/org-completing-read-tags
+                                                  helm-completing-read-handlers-alist)))
+        (org-icompleting-read prompt coll pred req initial hist def inh))
+    ;; Tags prompt
+    (let* ((initial (and (stringp initial)
+                         (not (string= initial ""))
+                         initial))
+           (curr (when initial
+                   (org-split-string initial ":")))
+           (table (org-uniquify
+                   (mapcar 'car org-last-tags-completion-table)))
+           (table (if curr
+                      ;; Remove current tags from list
+                      (cl-delete-if (lambda (x)
+                                      (member x curr))
+                                    table)
+                    table))
+           (prompt (if initial
+                       (concat "Tags " initial)
+                     prompt)))
+      (concat initial (mapconcat 'identity
+                                 (nreverse (aj/helm-completing-read-multiple
+                                            prompt table pred nil nil hist def
+                                            t "Org tags" "*Helm org tags*" ":"))
+                                 ":")))))
+
+(defun aj/helm-completing-read-multiple (prompt choices
+                                                &optional predicate require-match initial-input hist def
+                                                inherit-input-method name buffer sentinel)
+  "Read multiple items with `helm-completing-read-default-1'. Reading stops
+when the user enters SENTINEL. By default, SENTINEL is
+\"*done*\". SENTINEL is disambiguated with clashing completions
+by appending _ to SENTINEL until it becomes unique. So if there
+are multiple values that look like SENTINEL, the one with the
+most _ at the end is the actual sentinel value. See
+documentation for `ido-completing-read' for details on the
+other parameters."
+  (let ((sentinel (or sentinel "*done*"))
+        this-choice res done-reading)
+    ;; Uniquify the SENTINEL value
+    (while (cl-find sentinel choices)
+      (setq sentinel (concat sentinel "_")))
+    (setq choices (cons sentinel choices))
+    ;; Read choices
+    (while (not done-reading)
+      (setq this-choice (helm-completing-read-default-1 prompt choices
+                                                        predicate require-match initial-input hist def
+                                                        inherit-input-method name buffer nil t))
+      (if (equal this-choice sentinel)
+          (setq done-reading t)
+        (setq res (cons this-choice res))
+        (setq prompt (concat prompt this-choice ":"))))
+    res))
